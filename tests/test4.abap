@@ -1,0 +1,650 @@
+REPORT z_gt_test_5.
+
+" Includ il pool di tipi SLIS che contiene le definizioni necessarie per lavorare con le ALV
+TYPE-POOLS: slis.
+
+TABLES: zgt_usr.
+
+TYPES: BEGIN OF ty_user_table,
+    id TYPE c LENGTH 4,
+    uname TYPE string,
+    fname TYPE string,
+    lname TYPE string,
+    bdate TYPE dats,
+    role TYPE c LENGTH 5,
+END OF ty_user_table.
+
+" Variabili
+DATA: new_record        TYPE zgt_usr,
+      it_user_table     TYPE TABLE OF ty_user_table,
+      ls_user_table     LIKE LINE OF it_user_table.
+
+DATA: t_fieldcat    TYPE slis_t_fieldcat_alv,  " Tabella interna
+      wa_fieldcat   TYPE slis_fieldcat_alv,    " Record tabella interna
+      lt_header     TYPE slis_t_listheader,
+      ls_header     TYPE slis_listheader,
+      lv_lines      TYPE i,
+      lt_line       LIKE ls_header-info,
+      lv_linesc(10) TYPE c.
+
+DATA: g_repid TYPE sy-repid.
+
+DATA: it_excel_data TYPE TABLE OF alsmex_tabline,
+      ls_excel_row  LIKE LINE OF it_excel_data.
+
+DATA: lx_error TYPE REF TO cx_sy_dyn_call_illegal_type,
+      lv_error TYPE string.
+
+DATA: px_error TYPE REF TO cx_sy_dyn_call_param_not_found,
+      pv_error TYPE string.
+
+DATA: lanswer, err TYPE bapi_msg.
+
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE title_b1.
+SELECTION-SCREEN SKIP 1.
+PARAMETERS: p_id(4) TYPE c,
+            p_uname TYPE string VISIBLE LENGTH 15,
+            p_fname TYPE string VISIBLE LENGTH 15,
+            p_lname TYPE string VISIBLE LENGTH 15,
+            p_bdate TYPE dats,
+            p_role TYPE c LENGTH 5 AS LISTBOX VISIBLE LENGTH 10 DEFAULT ''.
+SELECTION-SCREEN SKIP 1.
+SELECTION-SCREEN END OF BLOCK b1.
+
+SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE title_b2.
+SELECTION-SCREEN SKIP 1.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS: r_src RADIOBUTTON GROUP rad1 DEFAULT 'X'.
+SELECTION-SCREEN COMMENT 5(20) label_b1.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS: r_add RADIOBUTTON GROUP rad1.
+SELECTION-SCREEN COMMENT 5(20) label_b2.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS: r_del RADIOBUTTON GROUP rad1.
+SELECTION-SCREEN COMMENT 5(20) label_b3.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN BEGIN OF LINE.
+PARAMETERS: r_mod RADIOBUTTON GROUP rad1.
+SELECTION-SCREEN COMMENT 5(20) label_b4.
+SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN SKIP 2.
+SELECTION-SCREEN PUSHBUTTON 1(5) p_import USER-COMMAND import_button.
+SELECTION-SCREEN COMMENT 7(30) label_b5.
+SELECTION-SCREEN END OF BLOCK b2.
+
+INITIALIZATION.
+  title_b1 = 'Parametri di selezione'.
+  title_b2 = 'Comandi'.
+  label_b1 = 'Cerca'.
+  label_b2 = 'Aggiungi'.
+  label_b3 = 'Elimina'.
+  label_b4 = 'Modifica'.
+  label_b5 = 'Importa Excel'.
+
+  MOVE: '@EX@' TO p_import.
+  PERFORM populate_roles.
+
+* Gestione della richiesta di valore per il campo a discesa
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_role.
+  PERFORM populate_roles.
+
+* --------------------------------------------------------------- *
+
+START-OF-SELECTION.
+
+AT SELECTION-SCREEN.
+
+  CASE sy-ucomm.
+    WHEN 'IMPORT_BUTTON'.
+
+      IF r_add = 'X'.
+
+        PERFORM import_excel_file TABLES it_excel_data it_user_table
+                                  USING ls_excel_row ls_user_table.
+
+        CALL FUNCTION 'POPUP_TO_CONFIRM'
+          EXPORTING
+            text_question  = 'Importare i seguenti utenti?'
+            text_button_1  = 'Si'
+            icon_button_1  = 'ICON_OKAY'
+            text_button_2  = 'No'
+            icon_button_2  = 'ICON_CANCEL'
+          IMPORTING
+            answer         = lanswer
+          EXCEPTIONS
+            text_not_found = 1
+            OTHERS         = 2.
+
+        IF lanswer EQ '1'.
+
+          " Inserisco record importati in tabella
+          PERFORM add_records_table TABLES it_user_table
+                                    CHANGING new_record.
+
+          " Creazione del titolo
+          PERFORM top_of_page_1.
+
+          " Creazione del field catalog
+          PERFORM create_fieldcatalog.
+
+          g_repid = sy-repid.
+
+          " La funzione REUSE_ALV_GRID_DISPLAY è stata chiamata per visualizzare i record della tabella in formato ALV
+          TRY.
+              CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+                EXPORTING                        
+                  it_fieldcat            = t_fieldcat       
+                  i_callback_program     = g_repid
+                  i_callback_top_of_page = 'TOP_OF_PAGE_1' 
+                TABLES                            
+                  t_outtab               = it_user_table    
+                EXCEPTIONS                        
+                  program_error          = 1             
+                  OTHERS                 = 2.               
+            CATCH cx_sy_dyn_call_param_not_found INTO px_error.
+              pv_error = px_error->get_text( ).
+              MESSAGE pv_error TYPE 'E'.
+            CATCH cx_sy_dyn_call_illegal_type INTO lx_error.
+              lv_error = lx_error->get_text( ).
+              MESSAGE lv_error TYPE 'E'.
+          ENDTRY.
+
+          RETURN.
+        ELSE.
+          RETURN.
+        ENDIF.
+      ELSE.
+        MESSAGE 'Selezionare casella "Aggiungi"' TYPE 'I'.
+        RETURN.
+      ENDIF.
+  ENDCASE.
+
+  CASE 'X'.
+    WHEN r_add.
+      PERFORM set_user_data USING p_id p_uname p_fname p_lname p_bdate p_role
+                            CHANGING new_record.
+
+      PERFORM add_user_data TABLES it_user_table
+                            USING new_record.
+    WHEN r_src.
+      PERFORM search_user_data TABLES it_user_table
+                               USING p_id p_uname p_fname p_lname p_bdate p_role.
+    WHEN r_del.
+      PERFORM delete_user_data TABLES it_user_table
+                               USING p_id p_uname p_fname p_lname p_bdate p_role.
+    WHEN r_mod.
+      PERFORM modify_user_data TABLES it_user_table
+                               USING p_id p_uname p_fname p_lname p_bdate p_role.
+    WHEN OTHERS.
+  ENDCASE.
+
+  " Creazione del titolo
+  PERFORM top_of_page_2.
+
+  " Creazione del field catalog
+  PERFORM create_fieldcatalog.
+
+  g_repid = sy-repid.
+
+  " La funzione REUSE_ALV_GRID_DISPLAY è stata chiamata per visualizzare i record della tabella in formato ALV
+  TRY.
+      CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+        EXPORTING                          " Sezione utilizzata per passare i parametri di input alla funzione
+          it_fieldcat            = t_fieldcat       " it_fieldcat: parametro di input della funzione che accetta il field catalog
+          i_callback_program     = g_repid
+          i_callback_top_of_page = 'TOP_OF_PAGE_2' " Modulo di callback per l'intestazione
+        TABLES                             " Sezione utilizzata per passare le tabelle interne alla funzione
+          t_outtab               = it_user_table    " t_outtab: parametro della funzione che accetta la tabella dei dati che devono essere visualizzati nella griglia ALV
+        EXCEPTIONS                         " Sezione viene utilizzata per gestire le eccezioni che potrebbero verificarsi durante l'esecuzione della funzione
+          program_error          = 1                " Se si verifica un errore la funzione restituirà 1
+          OTHERS                 = 2.               " Per tutte le altre eccezioni restituirà 2
+    CATCH cx_sy_dyn_call_param_not_found INTO px_error.
+      pv_error = px_error->get_text( ).
+      MESSAGE pv_error TYPE 'E'.
+    CATCH cx_sy_dyn_call_illegal_type INTO lx_error.
+      lv_error = lx_error->get_text( ).
+      MESSAGE lv_error TYPE 'E'.
+  ENDTRY.
+
+*&---------------------------------------------------------------------*
+*&      Form  set_user_data
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->_ID        text
+*      -->_UNAME     text
+*      -->_FNAME     text
+*      -->_LNAME     text
+*      -->_BDATE     text
+*      -->_ROLE      text
+*      <--_RECORD    text
+*----------------------------------------------------------------------*
+FORM set_user_data USING _id TYPE c
+                         _uname TYPE string
+                         _fname TYPE string
+                         _lname TYPE string
+                         _bdate TYPE dats
+                         _role TYPE c
+                   CHANGING _record TYPE zgt_usr.
+  _record-u_id = _id.
+  _record-u_uname = _uname.
+  _record-u_fname = _fname.
+  _record-u_lname = _lname.
+  _record-u_bdate = _bdate.
+  _record-u_role = _role.
+ENDFORM.                    "set_user_data
+
+*&---------------------------------------------------------------------*
+*&      Form  add_user_data
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->_IT_USER_TABLE  text
+*      -->_RECORD         text
+*----------------------------------------------------------------------*
+FORM add_user_data TABLES _it_user_table LIKE it_user_table
+                   USING _record TYPE zgt_usr.
+  " Inserisco il nuovo record in tabella
+  INSERT INTO zgt_usr VALUES _record.
+
+  " Estraggo i record dalla tabella
+  SELECT u_id u_uname u_fname u_lname u_bdate u_role
+      INTO TABLE _it_user_table
+      FROM zgt_usr.
+ENDFORM.                    "add_user_data
+
+*&---------------------------------------------------------------------*
+*&      Form  search_user_data
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->_IT_USER_TABLE  text
+*      -->_ID             text
+*      -->_UNAME          text
+*      -->_FNAME          text
+*      -->_LNAME          text
+*      -->_BDATE          text
+*      -->_ROLE           text
+*----------------------------------------------------------------------*
+FORM search_user_data  TABLES _it_user_table LIKE it_user_table
+                       USING _id _uname _fname _lname _bdate _role.
+
+  " Se i campi sono vuoti estraggo tutti i record
+  IF _id IS INITIAL AND _uname IS INITIAL AND _fname IS INITIAL AND _lname IS INITIAL AND _bdate IS INITIAL AND _role IS INITIAL.
+    SELECT u_id u_uname u_fname u_lname u_bdate u_role
+      INTO TABLE _it_user_table
+      FROM zgt_usr.
+
+  ELSE.
+    SELECT u_id u_uname u_fname u_lname u_bdate u_role
+        INTO TABLE _it_user_table
+        FROM zgt_usr
+        WHERE ( u_id = _id OR
+                u_uname = _uname OR
+                u_fname = _fname OR
+                u_lname = _lname OR
+                u_bdate = _bdate OR
+                u_role = _role ).
+
+  ENDIF.
+  IF sy-subrc <> 0.
+    MESSAGE 'Nessun utente trovato' TYPE 'E'.
+  ENDIF.
+
+ENDFORM.                    "search_user_data
+
+*&---------------------------------------------------------------------*
+*&      Form  delete_user_data
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->_IT_USER_TABLE  text
+*      -->_ID             text
+*      -->_UNAME          text
+*      -->_FNAME          text
+*      -->_LNAME          text
+*      -->_BDATE          text
+*      -->_ROLE           text
+*----------------------------------------------------------------------*
+FORM delete_user_data  TABLES _it_user_table LIKE it_user_table
+                       USING _id _uname _fname _lname _bdate _role.
+
+  " Verifica se il record esiste
+  SELECT SINGLE u_id
+    INTO _it_user_table
+    FROM zgt_usr
+    WHERE u_id = _id.
+
+  IF sy-subrc = 0.
+    DELETE FROM zgt_usr
+        WHERE u_id = _id.
+
+    SELECT u_id u_uname u_fname u_lname u_bdate u_role
+        INTO TABLE _it_user_table
+        FROM zgt_usr.
+  ELSE.
+    MESSAGE 'Nessun utente trovato' TYPE 'E'.
+  ENDIF.
+
+ENDFORM.                    "delete_user_data
+
+*&---------------------------------------------------------------------*
+*&      Form  modify_user_data
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->_IT_USER_TABLE  text
+*      -->_ID             text
+*      -->_UNAME          text
+*      -->_FNAME          text
+*      -->_LNAME          text
+*      -->_BDATE          text
+*      -->_ROLE           text
+*----------------------------------------------------------------------*
+FORM modify_user_data TABLES _it_user_table LIKE it_user_table
+                      USING _id TYPE c
+                            _uname TYPE string
+                            _fname TYPE string
+                            _lname TYPE string
+                            _bdate TYPE dats
+                            _role TYPE c.
+
+  " Verifica se il record esiste
+  SELECT SINGLE u_id
+    INTO _it_user_table
+    FROM zgt_usr
+    WHERE u_id = _id.
+
+  IF sy-subrc = 0.
+    " Aggiorna il record con i nuovi valori solo se i campi non sono nulli
+    IF _uname IS NOT INITIAL.
+      UPDATE zgt_usr SET u_uname = _uname WHERE u_id = _id.
+    ENDIF.
+    IF _fname IS NOT INITIAL.
+      UPDATE zgt_usr SET u_fname = _fname WHERE u_id = _id.
+    ENDIF.
+    IF _lname IS NOT INITIAL.
+      UPDATE zgt_usr SET u_lname = _lname WHERE u_id = _id.
+    ENDIF.
+    IF _bdate IS NOT INITIAL.
+      UPDATE zgt_usr SET u_bdate = _bdate WHERE u_id = _id.
+    ENDIF.
+    IF _role IS NOT INITIAL.
+      UPDATE zgt_usr SET u_role = _role WHERE u_id = _id.
+    ENDIF.
+
+    " Estraggo i record aggiornati dalla tabella
+    SELECT u_id u_uname u_fname u_lname u_bdate u_role
+      INTO TABLE _it_user_table
+      FROM zgt_usr.
+  ELSE.
+    " Gestione del caso in cui il record non esiste
+    MESSAGE 'Record non trovato' TYPE 'E'.
+  ENDIF.
+
+ENDFORM.                    "modify_user_data
+
+* Popolazione del campo a discesa
+FORM populate_roles.
+  DATA: lt_roles TYPE TABLE OF vrm_value,
+        ls_role  TYPE vrm_value.
+
+  CLEAR lt_roles.
+
+  ls_role-key = 'User'.
+  ls_role-text = 'User'.
+  APPEND ls_role TO lt_roles.
+
+  ls_role-key = 'Admin'.
+  ls_role-text = 'Admin'.
+  APPEND ls_role TO lt_roles.
+
+  CALL FUNCTION 'VRM_SET_VALUES'
+    EXPORTING
+      id     = 'P_ROLE'
+      values = lt_roles.
+ENDFORM.                    "populate_roles
+
+*&---------------------------------------------------------------------*
+*&      Form  create_fieldcatalog
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM create_fieldcatalog.
+  CLEAR t_fieldcat.    " Pulisce la tabella interna t_fieldcat, che conterrà le definizioni dei campi.
+
+  wa_fieldcat-tabname = 'USER_TABLE_STRUCT'.  " Assegna il nome della tabella interna alla struttura del field catalog
+  wa_fieldcat-fieldname = 'ID'.               " Specifica il nome del campo nella tabella interna
+  wa_fieldcat-seltext_m = 'ID'.               " Imposta il testo di selezione medio (testo descrittivo) per il campo
+  wa_fieldcat-outputlen = 4.                  " Imposta la lunghezza dell'output per il campo
+  APPEND wa_fieldcat TO t_fieldcat.           " Aggiunge la definizione del campo ID alla tabella del field catalog t_fieldcat
+
+  wa_fieldcat-fieldname = 'UNAME'.
+  wa_fieldcat-seltext_m = 'Username'.
+  wa_fieldcat-outputlen = 15.
+  APPEND wa_fieldcat TO t_fieldcat.
+
+  wa_fieldcat-fieldname = 'FNAME'.
+  wa_fieldcat-seltext_m = 'First Name'.
+  wa_fieldcat-outputlen = 15.
+  APPEND wa_fieldcat TO t_fieldcat.
+
+  wa_fieldcat-fieldname = 'LNAME'.
+  wa_fieldcat-seltext_m = 'Last Name'.
+  wa_fieldcat-outputlen = 15.
+  APPEND wa_fieldcat TO t_fieldcat.
+
+  wa_fieldcat-fieldname = 'BDATE'.
+  wa_fieldcat-seltext_m = 'Birth Date'.
+  wa_fieldcat-outputlen = 10.
+  APPEND wa_fieldcat TO t_fieldcat.
+
+  wa_fieldcat-fieldname = 'ROLE'.
+  wa_fieldcat-seltext_m = 'Role'.
+  wa_fieldcat-outputlen = 5.
+  APPEND wa_fieldcat TO t_fieldcat.
+
+ENDFORM.                    "create_fieldcatalog
+
+*FORM import_excel_file.
+*    MESSAGE 'File importato' TYPE 'E'.
+*ENDFORM.
+
+FORM import_excel_file TABLES _it_excel_data  LIKE it_excel_data
+                              _it_user_table  LIKE it_user_table
+                       USING  _ls_excel_row   LIKE LINE OF _it_excel_data
+                              _ls_user_table  TYPE ty_user_table.
+
+  DATA: lv_file_name  TYPE ibipparms-path,
+        lv_rc TYPE i.
+
+  " Apri il file dialog
+  TRY.
+      CALL FUNCTION 'F4_FILENAME'
+        EXPORTING
+          program_name  = sy-repid
+          dynpro_number = sy-dynnr
+        IMPORTING
+          file_name     = lv_file_name
+        EXCEPTIONS
+          mask_too_long = 1
+          OTHERS        = 2.
+    CATCH cx_sy_dyn_call_illegal_type INTO lx_error.  " TIPO DI ERRORE A RUN-TIME VERIFICATOSI
+      lv_error = lx_error->get_text( ).
+      MESSAGE lv_error TYPE 'E'.
+  ENDTRY.
+
+  IF lv_file_name IS INITIAL.
+    MESSAGE 'Nessun file selezionato' TYPE 'E'.
+    RETURN.
+  ENDIF.
+
+  " Importa il file Excel
+  CALL FUNCTION 'ALSM_EXCEL_TO_INTERNAL_TABLE'
+    EXPORTING
+      filename                = lv_file_name
+      i_begin_col             = 1
+      i_begin_row             = 1
+      i_end_col               = 256
+      i_end_row               = 65536
+    TABLES
+      intern                  = _it_excel_data
+    EXCEPTIONS
+      inconsistent_parameters = 1
+      upload_ole              = 2
+      OTHERS                  = 3.
+
+  IF sy-subrc <> 0.
+    MESSAGE 'Errore durante l''importazione del file Excel' TYPE 'E'.
+  ELSE.
+    " Processa i dati importati
+    PERFORM process_excel_data TABLES _it_excel_data _it_user_table
+                               USING _ls_excel_row _ls_user_table.
+  ENDIF.
+ENDFORM.                    "import_excel_file
+
+*&---------------------------------------------------------------------*
+*&      Form  process_excel_data
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->_IT_EXCEL_DATA  text
+*      -->_LS_EXCEL_ROW   text
+*      -->_LS_USER_TABLE  text
+*----------------------------------------------------------------------*
+FORM process_excel_data TABLES _it_excel_data LIKE it_excel_data
+                               _it_user_table LIKE it_user_table
+                        USING _ls_excel_row   LIKE LINE OF _it_excel_data
+                              _ls_user_table  TYPE ty_user_table.
+  DATA: lv_row TYPE i,
+        lv_col TYPE i,
+        lv_value TYPE string.
+
+  LOOP AT _it_excel_data INTO _ls_excel_row.
+    lv_row = ls_excel_row-row.
+    lv_col = ls_excel_row-col.
+    lv_value = ls_excel_row-value.
+
+    CASE lv_col.
+      WHEN 1.
+        _ls_user_table-id = lv_value.
+      WHEN 2.
+        _ls_user_table-uname = lv_value.
+      WHEN 3.
+        _ls_user_table-fname = lv_value.
+      WHEN 4.
+        _ls_user_table-lname = lv_value.
+      WHEN 5.
+        _ls_user_table-bdate = lv_value.
+      WHEN 6.
+        _ls_user_table-role = lv_value.
+    ENDCASE.
+
+    " Aggiungi il record alla tabella interna quando la riga è completa
+    IF lv_col = 6.
+      APPEND _ls_user_table TO _it_user_table.
+      CLEAR _ls_user_table.
+    ENDIF.
+    "process_excel_data
+  ENDLOOP.
+ENDFORM.                    "process_excel_data
+
+*&---------------------------------------------------------------------*
+*&      Form  add_records_table
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->_IT_USER_TABLE  text
+*      <--_RECORD         text
+*----------------------------------------------------------------------*
+FORM add_records_table TABLES _it_user_table  LIKE it_user_table
+                       CHANGING _record TYPE zgt_usr.
+
+  FIELD-SYMBOLS: <fs_user_table> TYPE ty_user_table.
+
+  LOOP AT _it_user_table ASSIGNING <fs_user_table>.
+    _record-u_id = <fs_user_table>-id.
+    _record-u_uname = <fs_user_table>-uname.
+    _record-u_fname = <fs_user_table>-fname.
+    _record-u_lname = <fs_user_table>-lname.
+    _record-u_bdate = <fs_user_table>-bdate.
+    _record-u_role = <fs_user_table>-role.
+    INSERT INTO zgt_usr VALUES _record.
+  ENDLOOP.
+ENDFORM.                    "add_records_table
+
+*&---------------------------------------------------------------------*
+*&      Form  create_alv_title
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->RT_HEADER  text
+*----------------------------------------------------------------------*
+FORM top_of_page_1.
+
+  CLEAR lt_header.
+
+  ls_header-typ = 'H'. " Tipo di riga (H = Header)
+  ls_header-info = 'Utenti Importati'. " Testo del titolo
+  APPEND ls_header TO lt_header.
+
+  ls_header-typ = 'S'. " Tipo di riga (S = Subheader)
+  ls_header-info = 'Visualizzazione dati utente'. " Testo del sottotitolo
+  APPEND ls_header TO lt_header.
+
+  DESCRIBE TABLE it_user_table LINES lv_lines.
+  lv_linesc = lv_lines.
+  CONCATENATE 'Totale record importati: ' lv_linesc
+  INTO lt_line SEPARATED BY space.
+  ls_header-typ = 'A'.
+  ls_header-info = lt_line.
+  APPEND ls_header TO lt_header.
+
+  TRY.
+      CALL FUNCTION 'REUSE_ALV_COMMENTARY_WRITE'
+        EXPORTING
+          it_list_commentary = lt_header.
+    CATCH cx_sy_dyn_call_illegal_type INTO lx_error.
+      lv_error = lx_error->get_text( ).
+      MESSAGE lv_error TYPE 'E'.
+  ENDTRY.
+
+ENDFORM.                    "create_alv_title
+
+*&---------------------------------------------------------------------*
+*&      Form  top_of_page_2
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM top_of_page_2.
+
+  CLEAR lt_header.
+
+  ls_header-typ = 'H'. " Tipo di riga (H = Header)
+  ls_header-info = 'Utenti'. " Testo del titolo
+  APPEND ls_header TO lt_header.
+
+  ls_header-typ = 'S'. " Tipo di riga (S = Subheader)
+  ls_header-info = 'Visualizzazione dati utente'. " Testo del sottotitolo
+  APPEND ls_header TO lt_header.
+
+  DESCRIBE TABLE it_user_table LINES lv_lines.
+  lv_linesc = lv_lines.
+  CONCATENATE 'Totale record: ' lv_linesc
+  INTO lt_line SEPARATED BY space.
+  ls_header-typ = 'A'.
+  ls_header-info = lt_line.
+  APPEND ls_header TO lt_header.
+
+  TRY.
+      CALL FUNCTION 'REUSE_ALV_COMMENTARY_WRITE'
+        EXPORTING
+          it_list_commentary = lt_header.
+    CATCH cx_sy_dyn_call_illegal_type INTO lx_error.
+      lv_error = lx_error->get_text( ).
+      MESSAGE lv_error TYPE 'E'.
+  ENDTRY.
+
+ENDFORM.                    "top_of_page_2
