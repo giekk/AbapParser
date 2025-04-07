@@ -1,6 +1,5 @@
 REPORT z_gt_test_5.
 
-" Includ il pool di tipi SLIS che contiene le definizioni necessarie per lavorare con le ALV
 TYPE-POOLS: slis.
 
 TABLES: zgt_usr.
@@ -14,13 +13,50 @@ TYPES: BEGIN OF ty_user_table,
     role TYPE c LENGTH 5,
 END OF ty_user_table.
 
+*----------------------------------------------------------------------*
+*       CLASS exception DEFINITION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
+CLASS exception DEFINITION.
+  PUBLIC SECTION.
+    DATA: lx_error TYPE REF TO cx_sy_dyn_call_illegal_type,
+          lv_error TYPE string,
+          px_error TYPE REF TO cx_sy_dyn_call_param_not_found,
+          pv_error TYPE string.
+
+    METHODS: exc_illegal_type,
+             exc_param_not_found.
+
+  PROTECTED SECTION.
+  PRIVATE SECTION.
+ENDCLASS.                    "exception DEFINITION
+
+*----------------------------------------------------------------------*
+*       CLASS exception IMPLEMENTATION
+*----------------------------------------------------------------------*
+*
+*----------------------------------------------------------------------*
+CLASS exception IMPLEMENTATION.
+  METHOD exc_illegal_type.
+    lv_error = lx_error->get_text( ).
+    MESSAGE lv_error TYPE 'E'.
+    CLEAR lv_error.
+  ENDMETHOD.                    "exc_illegal_type
+  METHOD exc_param_not_found.
+    pv_error = px_error->get_text( ).
+    MESSAGE pv_error TYPE 'E'.
+    CLEAR pv_error.
+  ENDMETHOD.                    "exc_param_not_found
+ENDCLASS.                    "exception IMPLEMENTATION
+
 " Variabili
 DATA: new_record        TYPE zgt_usr,
       it_user_table     TYPE TABLE OF ty_user_table,
       ls_user_table     LIKE LINE OF it_user_table.
 
-DATA: t_fieldcat    TYPE slis_t_fieldcat_alv,  " Tabella interna
-      wa_fieldcat   TYPE slis_fieldcat_alv,    " Record tabella interna
+DATA: t_fieldcat    TYPE slis_t_fieldcat_alv,
+      wa_fieldcat   TYPE slis_fieldcat_alv,
       lt_header     TYPE slis_t_listheader,
       ls_header     TYPE slis_listheader,
       lv_lines      TYPE i,
@@ -32,13 +68,9 @@ DATA: g_repid TYPE sy-repid.
 DATA: it_excel_data TYPE TABLE OF alsmex_tabline,
       ls_excel_row  LIKE LINE OF it_excel_data.
 
-DATA: lx_error TYPE REF TO cx_sy_dyn_call_illegal_type,
-      lv_error TYPE string.
-
-DATA: px_error TYPE REF TO cx_sy_dyn_call_param_not_found,
-      pv_error TYPE string.
-
 DATA: lanswer, err TYPE bapi_msg.
+
+DATA: exc TYPE REF TO exception.
 
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE title_b1.
 SELECTION-SCREEN SKIP 1.
@@ -96,13 +128,14 @@ START-OF-SELECTION.
 
 AT SELECTION-SCREEN.
 
+  CREATE OBJECT exc.
+
   CASE sy-ucomm.
     WHEN 'IMPORT_BUTTON'.
 
       IF r_add = 'X'.
 
-        PERFORM import_excel_file TABLES it_excel_data it_user_table
-                                  USING ls_excel_row ls_user_table.
+        PERFORM import_excel_file.
 
         CALL FUNCTION 'POPUP_TO_CONFIRM'
           EXPORTING
@@ -120,8 +153,7 @@ AT SELECTION-SCREEN.
         IF lanswer EQ '1'.
 
           " Inserisco record importati in tabella
-          PERFORM add_records_table TABLES it_user_table
-                                    CHANGING new_record.
+          PERFORM add_records_table CHANGING new_record.
 
           " Creazione del titolo
           PERFORM top_of_page_1.
@@ -131,24 +163,21 @@ AT SELECTION-SCREEN.
 
           g_repid = sy-repid.
 
-          " La funzione REUSE_ALV_GRID_DISPLAY è stata chiamata per visualizzare i record della tabella in formato ALV
           TRY.
               CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
-                EXPORTING                        
-                  it_fieldcat            = t_fieldcat       
+                EXPORTING
+                  it_fieldcat            = t_fieldcat[]
                   i_callback_program     = g_repid
-                  i_callback_top_of_page = 'TOP_OF_PAGE_1' 
-                TABLES                            
-                  t_outtab               = it_user_table    
-                EXCEPTIONS                        
-                  program_error          = 1             
-                  OTHERS                 = 2.               
-            CATCH cx_sy_dyn_call_param_not_found INTO px_error.
-              pv_error = px_error->get_text( ).
-              MESSAGE pv_error TYPE 'E'.
-            CATCH cx_sy_dyn_call_illegal_type INTO lx_error.
-              lv_error = lx_error->get_text( ).
-              MESSAGE lv_error TYPE 'E'.
+                  i_callback_top_of_page = 'TOP_OF_PAGE_1'
+                TABLES
+                  t_outtab               = it_user_table[]
+                EXCEPTIONS
+                  program_error          = 1
+                  OTHERS                 = 2.
+            CATCH cx_sy_dyn_call_param_not_found INTO exc->px_error.
+              exc->exc_param_not_found( ).
+            CATCH cx_sy_dyn_call_illegal_type INTO exc->lx_error.
+              exc->exc_illegal_type( ).
           ENDTRY.
 
           RETURN.
@@ -166,17 +195,13 @@ AT SELECTION-SCREEN.
       PERFORM set_user_data USING p_id p_uname p_fname p_lname p_bdate p_role
                             CHANGING new_record.
 
-      PERFORM add_user_data TABLES it_user_table
-                            USING new_record.
+      PERFORM add_user_data USING new_record.
     WHEN r_src.
-      PERFORM search_user_data TABLES it_user_table
-                               USING p_id p_uname p_fname p_lname p_bdate p_role.
+      PERFORM search_user_data USING p_id p_uname p_fname p_lname p_bdate p_role.
     WHEN r_del.
-      PERFORM delete_user_data TABLES it_user_table
-                               USING p_id p_uname p_fname p_lname p_bdate p_role.
+      PERFORM delete_user_data USING p_id p_uname p_fname p_lname p_bdate p_role.
     WHEN r_mod.
-      PERFORM modify_user_data TABLES it_user_table
-                               USING p_id p_uname p_fname p_lname p_bdate p_role.
+      PERFORM modify_user_data USING p_id p_uname p_fname p_lname p_bdate p_role.
     WHEN OTHERS.
   ENDCASE.
 
@@ -188,24 +213,21 @@ AT SELECTION-SCREEN.
 
   g_repid = sy-repid.
 
-  " La funzione REUSE_ALV_GRID_DISPLAY è stata chiamata per visualizzare i record della tabella in formato ALV
   TRY.
       CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
-        EXPORTING                          " Sezione utilizzata per passare i parametri di input alla funzione
-          it_fieldcat            = t_fieldcat       " it_fieldcat: parametro di input della funzione che accetta il field catalog
+        EXPORTING
+          it_fieldcat            = t_fieldcat[]
           i_callback_program     = g_repid
-          i_callback_top_of_page = 'TOP_OF_PAGE_2' " Modulo di callback per l'intestazione
-        TABLES                             " Sezione utilizzata per passare le tabelle interne alla funzione
-          t_outtab               = it_user_table    " t_outtab: parametro della funzione che accetta la tabella dei dati che devono essere visualizzati nella griglia ALV
-        EXCEPTIONS                         " Sezione viene utilizzata per gestire le eccezioni che potrebbero verificarsi durante l'esecuzione della funzione
-          program_error          = 1                " Se si verifica un errore la funzione restituirà 1
-          OTHERS                 = 2.               " Per tutte le altre eccezioni restituirà 2
-    CATCH cx_sy_dyn_call_param_not_found INTO px_error.
-      pv_error = px_error->get_text( ).
-      MESSAGE pv_error TYPE 'E'.
-    CATCH cx_sy_dyn_call_illegal_type INTO lx_error.
-      lv_error = lx_error->get_text( ).
-      MESSAGE lv_error TYPE 'E'.
+          i_callback_top_of_page = 'TOP_OF_PAGE_2'
+        TABLES
+          t_outtab               = it_user_table[]
+        EXCEPTIONS
+          program_error          = 1
+          OTHERS                 = 2.
+    CATCH cx_sy_dyn_call_param_not_found INTO exc->px_error.
+      exc->exc_param_not_found( ).
+    CATCH cx_sy_dyn_call_illegal_type INTO exc->lx_error.
+      exc->exc_illegal_type( ).
   ENDTRY.
 
 *&---------------------------------------------------------------------*
@@ -244,14 +266,13 @@ ENDFORM.                    "set_user_data
 *      -->_IT_USER_TABLE  text
 *      -->_RECORD         text
 *----------------------------------------------------------------------*
-FORM add_user_data TABLES _it_user_table LIKE it_user_table
-                   USING _record TYPE zgt_usr.
+FORM add_user_data USING _record TYPE zgt_usr.
   " Inserisco il nuovo record in tabella
   INSERT INTO zgt_usr VALUES _record.
 
   " Estraggo i record dalla tabella
   SELECT u_id u_uname u_fname u_lname u_bdate u_role
-      INTO TABLE _it_user_table
+      INTO TABLE it_user_table
       FROM zgt_usr.
 ENDFORM.                    "add_user_data
 
@@ -268,18 +289,17 @@ ENDFORM.                    "add_user_data
 *      -->_BDATE          text
 *      -->_ROLE           text
 *----------------------------------------------------------------------*
-FORM search_user_data  TABLES _it_user_table LIKE it_user_table
-                       USING _id _uname _fname _lname _bdate _role.
+FORM search_user_data USING _id _uname _fname _lname _bdate _role.
 
   " Se i campi sono vuoti estraggo tutti i record
   IF _id IS INITIAL AND _uname IS INITIAL AND _fname IS INITIAL AND _lname IS INITIAL AND _bdate IS INITIAL AND _role IS INITIAL.
     SELECT u_id u_uname u_fname u_lname u_bdate u_role
-      INTO TABLE _it_user_table
+      INTO TABLE it_user_table
       FROM zgt_usr.
 
   ELSE.
     SELECT u_id u_uname u_fname u_lname u_bdate u_role
-        INTO TABLE _it_user_table
+        INTO TABLE it_user_table
         FROM zgt_usr
         WHERE ( u_id = _id OR
                 u_uname = _uname OR
@@ -308,21 +328,22 @@ ENDFORM.                    "search_user_data
 *      -->_BDATE          text
 *      -->_ROLE           text
 *----------------------------------------------------------------------*
-FORM delete_user_data  TABLES _it_user_table LIKE it_user_table
-                       USING _id _uname _fname _lname _bdate _role.
+FORM delete_user_data USING _id _uname _fname _lname _bdate _role.
 
   " Verifica se il record esiste
+  DATA: temp_id TYPE zgt_usr-u_id.
   SELECT SINGLE u_id
-    INTO _it_user_table
+    INTO temp_id
     FROM zgt_usr
     WHERE u_id = _id.
 
   IF sy-subrc = 0.
+    CLEAR temp_id.
     DELETE FROM zgt_usr
         WHERE u_id = _id.
 
     SELECT u_id u_uname u_fname u_lname u_bdate u_role
-        INTO TABLE _it_user_table
+        INTO TABLE it_user_table
         FROM zgt_usr.
   ELSE.
     MESSAGE 'Nessun utente trovato' TYPE 'E'.
@@ -343,8 +364,7 @@ ENDFORM.                    "delete_user_data
 *      -->_BDATE          text
 *      -->_ROLE           text
 *----------------------------------------------------------------------*
-FORM modify_user_data TABLES _it_user_table LIKE it_user_table
-                      USING _id TYPE c
+FORM modify_user_data USING _id TYPE c
                             _uname TYPE string
                             _fname TYPE string
                             _lname TYPE string
@@ -352,12 +372,14 @@ FORM modify_user_data TABLES _it_user_table LIKE it_user_table
                             _role TYPE c.
 
   " Verifica se il record esiste
+  DATA: temp_id TYPE zgt_usr-u_id.
   SELECT SINGLE u_id
-    INTO _it_user_table
+    INTO temp_id
     FROM zgt_usr
     WHERE u_id = _id.
 
   IF sy-subrc = 0.
+    CLEAR temp_id.
     " Aggiorna il record con i nuovi valori solo se i campi non sono nulli
     IF _uname IS NOT INITIAL.
       UPDATE zgt_usr SET u_uname = _uname WHERE u_id = _id.
@@ -377,7 +399,7 @@ FORM modify_user_data TABLES _it_user_table LIKE it_user_table
 
     " Estraggo i record aggiornati dalla tabella
     SELECT u_id u_uname u_fname u_lname u_bdate u_role
-      INTO TABLE _it_user_table
+      INTO TABLE it_user_table
       FROM zgt_usr.
   ELSE.
     " Gestione del caso in cui il record non esiste
@@ -413,13 +435,13 @@ ENDFORM.                    "populate_roles
 *       text
 *----------------------------------------------------------------------*
 FORM create_fieldcatalog.
-  CLEAR t_fieldcat.    " Pulisce la tabella interna t_fieldcat, che conterrà le definizioni dei campi.
+  CLEAR t_fieldcat[].
 
-  wa_fieldcat-tabname = 'USER_TABLE_STRUCT'.  " Assegna il nome della tabella interna alla struttura del field catalog
-  wa_fieldcat-fieldname = 'ID'.               " Specifica il nome del campo nella tabella interna
-  wa_fieldcat-seltext_m = 'ID'.               " Imposta il testo di selezione medio (testo descrittivo) per il campo
-  wa_fieldcat-outputlen = 4.                  " Imposta la lunghezza dell'output per il campo
-  APPEND wa_fieldcat TO t_fieldcat.           " Aggiunge la definizione del campo ID alla tabella del field catalog t_fieldcat
+  wa_fieldcat-tabname = 'USER_TABLE_STRUCT'.
+  wa_fieldcat-fieldname = 'ID'.
+  wa_fieldcat-seltext_m = 'ID'.
+  wa_fieldcat-outputlen = 4.
+  APPEND wa_fieldcat TO t_fieldcat.
 
   wa_fieldcat-fieldname = 'UNAME'.
   wa_fieldcat-seltext_m = 'Username'.
@@ -448,14 +470,12 @@ FORM create_fieldcatalog.
 
 ENDFORM.                    "create_fieldcatalog
 
-*FORM import_excel_file.
-*    MESSAGE 'File importato' TYPE 'E'.
-*ENDFORM.
-
-FORM import_excel_file TABLES _it_excel_data  LIKE it_excel_data
-                              _it_user_table  LIKE it_user_table
-                       USING  _ls_excel_row   LIKE LINE OF _it_excel_data
-                              _ls_user_table  TYPE ty_user_table.
+*&---------------------------------------------------------------------*
+*&      Form  import_excel_file
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+FORM import_excel_file.
 
   DATA: lv_file_name  TYPE ibipparms-path,
         lv_rc TYPE i.
@@ -471,9 +491,8 @@ FORM import_excel_file TABLES _it_excel_data  LIKE it_excel_data
         EXCEPTIONS
           mask_too_long = 1
           OTHERS        = 2.
-    CATCH cx_sy_dyn_call_illegal_type INTO lx_error.  " TIPO DI ERRORE A RUN-TIME VERIFICATOSI
-      lv_error = lx_error->get_text( ).
-      MESSAGE lv_error TYPE 'E'.
+    CATCH cx_sy_dyn_call_illegal_type INTO exc->lx_error.
+      exc->exc_illegal_type( ).
   ENDTRY.
 
   IF lv_file_name IS INITIAL.
@@ -490,7 +509,7 @@ FORM import_excel_file TABLES _it_excel_data  LIKE it_excel_data
       i_end_col               = 256
       i_end_row               = 65536
     TABLES
-      intern                  = _it_excel_data
+      intern                  = it_excel_data[]
     EXCEPTIONS
       inconsistent_parameters = 1
       upload_ole              = 2
@@ -500,8 +519,7 @@ FORM import_excel_file TABLES _it_excel_data  LIKE it_excel_data
     MESSAGE 'Errore durante l''importazione del file Excel' TYPE 'E'.
   ELSE.
     " Processa i dati importati
-    PERFORM process_excel_data TABLES _it_excel_data _it_user_table
-                               USING _ls_excel_row _ls_user_table.
+    PERFORM process_excel_data.
   ENDIF.
 ENDFORM.                    "import_excel_file
 
@@ -514,38 +532,35 @@ ENDFORM.                    "import_excel_file
 *      -->_LS_EXCEL_ROW   text
 *      -->_LS_USER_TABLE  text
 *----------------------------------------------------------------------*
-FORM process_excel_data TABLES _it_excel_data LIKE it_excel_data
-                               _it_user_table LIKE it_user_table
-                        USING _ls_excel_row   LIKE LINE OF _it_excel_data
-                              _ls_user_table  TYPE ty_user_table.
+FORM process_excel_data.
   DATA: lv_row TYPE i,
         lv_col TYPE i,
         lv_value TYPE string.
 
-  LOOP AT _it_excel_data INTO _ls_excel_row.
+  LOOP AT it_excel_data INTO ls_excel_row.
     lv_row = ls_excel_row-row.
     lv_col = ls_excel_row-col.
     lv_value = ls_excel_row-value.
 
     CASE lv_col.
       WHEN 1.
-        _ls_user_table-id = lv_value.
+        ls_user_table-id = lv_value.
       WHEN 2.
-        _ls_user_table-uname = lv_value.
+        ls_user_table-uname = lv_value.
       WHEN 3.
-        _ls_user_table-fname = lv_value.
+        ls_user_table-fname = lv_value.
       WHEN 4.
-        _ls_user_table-lname = lv_value.
+        ls_user_table-lname = lv_value.
       WHEN 5.
-        _ls_user_table-bdate = lv_value.
+        ls_user_table-bdate = lv_value.
       WHEN 6.
-        _ls_user_table-role = lv_value.
+        ls_user_table-role = lv_value.
     ENDCASE.
 
     " Aggiungi il record alla tabella interna quando la riga è completa
     IF lv_col = 6.
-      APPEND _ls_user_table TO _it_user_table.
-      CLEAR _ls_user_table.
+      APPEND ls_user_table TO it_user_table.
+      CLEAR ls_user_table.
     ENDIF.
     "process_excel_data
   ENDLOOP.
@@ -559,12 +574,11 @@ ENDFORM.                    "process_excel_data
 *      -->_IT_USER_TABLE  text
 *      <--_RECORD         text
 *----------------------------------------------------------------------*
-FORM add_records_table TABLES _it_user_table  LIKE it_user_table
-                       CHANGING _record TYPE zgt_usr.
+FORM add_records_table CHANGING _record TYPE zgt_usr.
 
   FIELD-SYMBOLS: <fs_user_table> TYPE ty_user_table.
 
-  LOOP AT _it_user_table ASSIGNING <fs_user_table>.
+  LOOP AT it_user_table ASSIGNING <fs_user_table>.
     _record-u_id = <fs_user_table>-id.
     _record-u_uname = <fs_user_table>-uname.
     _record-u_fname = <fs_user_table>-fname.
@@ -606,9 +620,8 @@ FORM top_of_page_1.
       CALL FUNCTION 'REUSE_ALV_COMMENTARY_WRITE'
         EXPORTING
           it_list_commentary = lt_header.
-    CATCH cx_sy_dyn_call_illegal_type INTO lx_error.
-      lv_error = lx_error->get_text( ).
-      MESSAGE lv_error TYPE 'E'.
+    CATCH cx_sy_dyn_call_illegal_type INTO exc->lx_error.
+      exc->exc_illegal_type( ).
   ENDTRY.
 
 ENDFORM.                    "create_alv_title
@@ -642,9 +655,8 @@ FORM top_of_page_2.
       CALL FUNCTION 'REUSE_ALV_COMMENTARY_WRITE'
         EXPORTING
           it_list_commentary = lt_header.
-    CATCH cx_sy_dyn_call_illegal_type INTO lx_error.
-      lv_error = lx_error->get_text( ).
-      MESSAGE lv_error TYPE 'E'.
+    CATCH cx_sy_dyn_call_illegal_type INTO exc->lx_error.
+      exc->exc_illegal_type( ).
   ENDTRY.
 
 ENDFORM.                    "top_of_page_2
