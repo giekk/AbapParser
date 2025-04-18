@@ -4,15 +4,6 @@ TYPE-POOLS: slis.
 
 TABLES: zgt_usr.
 
-TYPES: BEGIN OF ty_user_table,
-    id TYPE c LENGTH 4,
-    uname TYPE string,
-    fname TYPE string,
-    lname TYPE string,
-    bdate TYPE dats,
-    role TYPE c LENGTH 5,
-END OF ty_user_table.
-
 *----------------------------------------------------------------------*
 *       CLASS exception DEFINITION
 *----------------------------------------------------------------------*
@@ -51,8 +42,16 @@ CLASS exception IMPLEMENTATION.
 ENDCLASS.                    "exception IMPLEMENTATION
 
 " Variabili
+DATA: BEGIN OF it_user_table OCCURS 0,
+    id TYPE zgt_usr-u_id,
+    uname TYPE zgt_usr-u_uname,
+    fname TYPE zgt_usr-u_fname,
+    lname TYPE zgt_usr-u_lname,
+    bdate TYPE zgt_usr-u_bdate,
+    role TYPE zgt_usr-u_role,
+END OF it_user_table.
+
 DATA: new_record        TYPE zgt_usr,
-      it_user_table     TYPE TABLE OF ty_user_table,
       ls_user_table     LIKE LINE OF it_user_table.
 
 DATA: t_fieldcat    TYPE slis_t_fieldcat_alv,
@@ -116,7 +115,6 @@ INITIALIZATION.
   label_b5 = 'Importa Excel'.
 
   MOVE: '@EX@' TO p_import.
-  PERFORM populate_roles.
 
 * Gestione della richiesta di valore per il campo a discesa
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_role.
@@ -136,54 +134,8 @@ AT SELECTION-SCREEN.
       IF r_add = 'X'.
 
         PERFORM import_excel_file.
+        RETURN.
 
-        CALL FUNCTION 'POPUP_TO_CONFIRM'
-          EXPORTING
-            text_question  = 'Importare i seguenti utenti?'
-            text_button_1  = 'Si'
-            icon_button_1  = 'ICON_OKAY'
-            text_button_2  = 'No'
-            icon_button_2  = 'ICON_CANCEL'
-          IMPORTING
-            answer         = lanswer
-          EXCEPTIONS
-            text_not_found = 1
-            OTHERS         = 2.
-
-        IF lanswer EQ '1'.
-
-          " Inserisco record importati in tabella
-          PERFORM add_records_table CHANGING new_record.
-
-          " Creazione del titolo
-          PERFORM top_of_page_1.
-
-          " Creazione del field catalog
-          PERFORM create_fieldcatalog.
-
-          g_repid = sy-repid.
-
-          TRY.
-              CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
-                EXPORTING
-                  it_fieldcat            = t_fieldcat[]
-                  i_callback_program     = g_repid
-                  i_callback_top_of_page = 'TOP_OF_PAGE_1'
-                TABLES
-                  t_outtab               = it_user_table[]
-                EXCEPTIONS
-                  program_error          = 1
-                  OTHERS                 = 2.
-            CATCH cx_sy_dyn_call_param_not_found INTO exc->px_error.
-              exc->exc_param_not_found( ).
-            CATCH cx_sy_dyn_call_illegal_type INTO exc->lx_error.
-              exc->exc_illegal_type( ).
-          ENDTRY.
-
-          RETURN.
-        ELSE.
-          RETURN.
-        ENDIF.
       ELSE.
         MESSAGE 'Selezionare casella "Aggiungi"' TYPE 'I'.
         RETURN.
@@ -267,6 +219,7 @@ ENDFORM.                    "set_user_data
 *      -->_RECORD         text
 *----------------------------------------------------------------------*
 FORM add_user_data USING _record TYPE zgt_usr.
+  CLEAR it_user_table[].
   " Inserisco il nuovo record in tabella
   INSERT INTO zgt_usr VALUES _record.
 
@@ -290,7 +243,7 @@ ENDFORM.                    "add_user_data
 *      -->_ROLE           text
 *----------------------------------------------------------------------*
 FORM search_user_data USING _id _uname _fname _lname _bdate _role.
-
+  CLEAR it_user_table[].
   " Se i campi sono vuoti estraggo tutti i record
   IF _id IS INITIAL AND _uname IS INITIAL AND _fname IS INITIAL AND _lname IS INITIAL AND _bdate IS INITIAL AND _role IS INITIAL.
     SELECT u_id u_uname u_fname u_lname u_bdate u_role
@@ -329,7 +282,7 @@ ENDFORM.                    "search_user_data
 *      -->_ROLE           text
 *----------------------------------------------------------------------*
 FORM delete_user_data USING _id _uname _fname _lname _bdate _role.
-
+  CLEAR it_user_table[].
   " Verifica se il record esiste
   DATA: temp_id TYPE zgt_usr-u_id.
   SELECT SINGLE u_id
@@ -370,7 +323,7 @@ FORM modify_user_data USING _id TYPE c
                             _lname TYPE string
                             _bdate TYPE dats
                             _role TYPE c.
-
+  CLEAR it_user_table[].
   " Verifica se il record esiste
   DATA: temp_id TYPE zgt_usr-u_id.
   SELECT SINGLE u_id
@@ -537,6 +490,8 @@ FORM process_excel_data.
         lv_col TYPE i,
         lv_value TYPE string.
 
+  CLEAR it_user_table[].
+
   LOOP AT it_excel_data INTO ls_excel_row.
     lv_row = ls_excel_row-row.
     lv_col = ls_excel_row-col.
@@ -544,17 +499,17 @@ FORM process_excel_data.
 
     CASE lv_col.
       WHEN 1.
-        ls_user_table-id = lv_value.
+        MOVE lv_value TO ls_user_table-id.
       WHEN 2.
-        ls_user_table-uname = lv_value.
+        MOVE lv_value TO ls_user_table-uname.
       WHEN 3.
-        ls_user_table-fname = lv_value.
+        MOVE lv_value TO ls_user_table-fname.
       WHEN 4.
-        ls_user_table-lname = lv_value.
+        MOVE lv_value TO ls_user_table-lname.
       WHEN 5.
-        ls_user_table-bdate = lv_value.
+        MOVE lv_value TO ls_user_table-bdate.
       WHEN 6.
-        ls_user_table-role = lv_value.
+        MOVE lv_value TO ls_user_table-role.
     ENDCASE.
 
     " Aggiungi il record alla tabella interna quando la riga è completa
@@ -574,18 +529,19 @@ ENDFORM.                    "process_excel_data
 *      -->_IT_USER_TABLE  text
 *      <--_RECORD         text
 *----------------------------------------------------------------------*
-FORM add_records_table CHANGING _record TYPE zgt_usr.
+FORM add_records_table.
 
-  FIELD-SYMBOLS: <fs_user_table> TYPE ty_user_table.
+  FIELD-SYMBOLS: <fs_user_table> LIKE LINE OF it_user_table.
 
   LOOP AT it_user_table ASSIGNING <fs_user_table>.
-    _record-u_id = <fs_user_table>-id.
-    _record-u_uname = <fs_user_table>-uname.
-    _record-u_fname = <fs_user_table>-fname.
-    _record-u_lname = <fs_user_table>-lname.
-    _record-u_bdate = <fs_user_table>-bdate.
-    _record-u_role = <fs_user_table>-role.
-    INSERT INTO zgt_usr VALUES _record.
+    CLEAR new_record.
+    new_record-u_id = <fs_user_table>-id.
+    new_record-u_uname = <fs_user_table>-uname.
+    new_record-u_fname = <fs_user_table>-fname.
+    new_record-u_lname = <fs_user_table>-lname.
+    new_record-u_bdate = <fs_user_table>-bdate.
+    new_record-u_role = <fs_user_table>-role.
+    INSERT INTO zgt_usr VALUES new_record.
   ENDLOOP.
 ENDFORM.                    "add_records_table
 
@@ -660,3 +616,145 @@ FORM top_of_page_2.
   ENDTRY.
 
 ENDFORM.                    "top_of_page_2
+*&---------------------------------------------------------------------*
+*&      Form  POPUP_TO_CONFIRM
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->P__IT_USER_TABLE  text
+*      -->P_LIKE  text
+*      -->P_IT_USER_TABLE  text
+*----------------------------------------------------------------------*
+FORM popup_to_confirm  TABLES _it_user_table STRUCTURE it_user_table.
+  TYPE-POOLS: slis.
+  DATA: x_fld TYPE slis_fieldcat_alv,
+        it_fld TYPE slis_t_fieldcat_alv,
+        l_layout TYPE slis_layout_alv.
+
+  l_layout-totals_before_items = l_layout-zebra = 'X'.
+
+  x_fld-fieldname = 'ID'.
+  x_fld-tabname = 'IT_USER_TABLE'.
+  x_fld-ref_fieldname = 'ZGT_USR'.
+  x_fld-ref_tabname = 'U_ID'.
+  x_fld-col_pos = 1.
+  x_fld-reptext_ddic = 'ID'.
+  APPEND x_fld TO it_fld. CLEAR x_fld.
+
+  x_fld-fieldname = 'UNAME'.
+  x_fld-tabname = 'IT_USER_TABLE'.
+  x_fld-ref_fieldname = 'ZGT_USR'.
+  x_fld-ref_tabname = 'U_UNAME'.
+  x_fld-reptext_ddic = 'Username'.
+  x_fld-col_pos = 2.
+  APPEND x_fld TO it_fld. CLEAR x_fld.
+
+  x_fld-fieldname = 'FNAME'.
+  x_fld-tabname = 'IT_USER_TABLE'.
+  x_fld-ref_fieldname = 'ZGT_USR'.
+  x_fld-ref_tabname = 'U_FNAME'.
+  x_fld-reptext_ddic = 'Nome'.
+  x_fld-col_pos = 3.
+  APPEND x_fld TO it_fld. CLEAR x_fld.
+
+  x_fld-fieldname = 'LNAME'.
+  x_fld-tabname = 'IT_USER_TABLE'.
+  x_fld-ref_fieldname = 'ZGT_USR'.
+  x_fld-ref_tabname = 'U_LNAME'.
+  x_fld-reptext_ddic = 'Cognome'.
+  x_fld-col_pos = 4.
+  APPEND x_fld TO it_fld. CLEAR x_fld.
+
+  x_fld-fieldname = 'BDATE'.
+  x_fld-tabname = 'IT_USER_TABLE'.
+  x_fld-ref_fieldname = 'ZGT_USR'.
+  x_fld-ref_tabname = 'U_BDATE'.
+  x_fld-reptext_ddic = 'Data di nascita'.
+  x_fld-col_pos = 5.
+  APPEND x_fld TO it_fld. CLEAR x_fld.
+
+  x_fld-fieldname = 'ROLE'.
+  x_fld-tabname = 'IT_USER_TABLE'.
+  x_fld-ref_fieldname = 'ZGT_USR'.
+  x_fld-ref_tabname = 'U_ROLE'.
+  x_fld-reptext_ddic = 'Ruolo'.
+  x_fld-col_pos = 6.
+  APPEND x_fld TO it_fld. CLEAR x_fld.
+
+  DATA: rows TYPE i,
+        str_rows TYPE string.
+  DESCRIBE TABLE it_user_table LINES rows.
+  MOVE rows TO str_rows.
+
+  CONCATENATE
+  'Utenti:' str_rows
+  INTO l_layout-window_titlebar(20) SEPARATED BY space.
+
+  TRY.
+      CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+        EXPORTING
+          i_callback_program      = sy-repid
+          is_layout               = l_layout
+          i_callback_top_of_page  = 'TOP_OF_PAGE_1'
+          i_callback_user_command = 'USER_COMMAND_POPUP'
+          it_fieldcat             = it_fld
+          i_save                  = 'X'
+          i_screen_start_column   = 1
+          i_screen_start_line     = 1
+          i_screen_end_column     = 110
+          i_screen_end_line       = 25
+        TABLES
+          t_outtab                = it_user_table
+        EXCEPTIONS
+          program_error           = 1
+          OTHERS                  = 2.
+    CATCH cx_sy_dyn_call_param_not_found INTO exc->px_error.
+      exc->exc_param_not_found( ).
+    CATCH cx_sy_dyn_call_illegal_type INTO exc->lx_error.
+      exc->exc_illegal_type( ).
+  ENDTRY.
+
+  PERFORM user_command_popup.
+ENDFORM.                    " POPUP_TO_CONFIRM
+
+*&---------------------------------------------------------------------*
+*&      Form  user_command_popup
+*&---------------------------------------------------------------------*
+*       text
+*----------------------------------------------------------------------*
+*      -->R_UCOMM      text
+*      -->RS_SELFIELD  text
+*----------------------------------------------------------------------*
+FORM user_command_popup USING r_ucomm LIKE sy-ucomm
+                             rs_selfield TYPE slis_selfield.
+
+  IF r_ucomm EQ '&ONT'.
+
+    CALL FUNCTION 'POPUP_TO_CONFIRM'
+      EXPORTING
+        titlebar       = 'Conferma importazione'
+        text_question  = 'Importare i seguenti utenti?'
+        text_button_1  = 'Sì'
+        icon_button_1  = 'ICON_OK'
+        text_button_2  = 'No'
+        icon_button_2  = 'ICON_CANCEL'
+        default_button = '1'
+      IMPORTING
+        answer         = lanswer
+      EXCEPTIONS
+        text_not_found = 1
+        OTHERS         = 2.
+    .
+    IF lanswer EQ 1.
+      PERFORM add_records_table.
+      MESSAGE 'Utenti importati con successo!' TYPE 'I'.
+    ELSE.
+      MESSAGE 'Importazione annullata.' TYPE 'I'.
+      EXIT.
+    ENDIF.
+  ELSE.
+    MESSAGE 'Importazione annullata.' TYPE 'I'.
+    EXIT.
+  ENDIF.
+
+ENDFORM.                    "user_command_popup
